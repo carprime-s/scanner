@@ -3,58 +3,92 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Складской Сканер</title>
+    <title>Складской Поиск</title>
     <script src="https://unpkg.com/html5-qrcode" type="text/javascript"></script>
     <style>
-        body { font-family: sans-serif; padding: 20px; text-align: center; background-color: #f0f2f5; }
-        #reader { width: 100%; max-width: 500px; margin: 0 auto; border-radius: 8px; overflow: hidden; }
-        #result { 
-            margin-top: 20px; 
-            padding: 20px; 
-            border-radius: 8px; 
-            background: white; 
-            box-shadow: 0 2px 5px rgba(0,0,0,0.1); 
-            display: none; 
-            text-align: left;
+        body { font-family: sans-serif; padding: 15px; text-align: center; background-color: #f0f2f5; max-width: 600px; margin: 0 auto; }
+        
+        /* Search Bar Styles */
+        .search-container { margin-bottom: 15px; display: flex; gap: 5px; }
+        #searchInput { 
+            width: 100%; padding: 12px; font-size: 16px; 
+            border: 1px solid #ccc; border-radius: 8px; 
+        }
+        
+        /* Search Results List */
+        #searchList { 
+            text-align: left; background: white; 
+            border: 1px solid #ddd; border-radius: 8px; 
+            margin-bottom: 15px; display: none; 
+            max-height: 300px; overflow-y: auto;
+        }
+        .search-item { 
+            padding: 10px; border-bottom: 1px solid #eee; cursor: pointer; 
+        }
+        .search-item:last-child { border-bottom: none; }
+        .search-item:hover { background-color: #f9f9f9; }
+        .item-name { font-weight: bold; font-size: 0.9em; color: #333; }
+        .item-barcode { font-size: 0.8em; color: #888; }
+
+        /* Camera & Result Styles */
+        #reader { width: 100%; border-radius: 8px; overflow: hidden; background: #000; }
+        
+        #resultCard { 
+            margin-top: 20px; padding: 20px; border-radius: 8px; 
+            background: white; box-shadow: 0 4px 10px rgba(0,0,0,0.1); 
+            display: none; text-align: left;
         }
         .label { font-weight: bold; color: #888; font-size: 0.8em; margin-top: 10px; }
         .value { font-size: 1.2em; color: #000; font-weight: 500; word-wrap: break-word; }
         .location-box { 
-            background: #e3f2fd; 
-            color: #0d47a1; 
-            padding: 10px; 
-            border-radius: 4px; 
-            text-align: center; 
-            font-size: 1.5em; 
-            font-weight: bold; 
-            margin-top: 5px;
+            background: #e3f2fd; color: #0d47a1; padding: 15px; 
+            border-radius: 4px; text-align: center; 
+            font-size: 2em; font-weight: bold; margin-top: 5px;
         }
-        button { margin-top: 20px; padding: 12px 24px; font-size: 16px; cursor: pointer; width: 100%; background: #333; color: white; border: none; border-radius: 4px;}
-        #status { margin-bottom: 10px; color: #666; }
+        
+        button { 
+            margin-top: 20px; padding: 12px 24px; font-size: 16px; 
+            cursor: pointer; width: 100%; background: #333; 
+            color: white; border: none; border-radius: 4px;
+        }
+        #status { margin-bottom: 10px; color: #666; font-size: 0.9em; }
     </style>
 </head>
 <body>
 
-    <h3>Сканер Штрихкодов</h3>
-    <div id="status">Загрузка базы данных...</div>
+    <!-- 1. SEARCH BAR -->
+    <div class="search-container">
+        <input type="text" id="searchInput" placeholder="Поиск по названию или штрихкоду..." onkeyup="doSearch()">
+    </div>
+
+    <!-- 2. SEARCH RESULTS LIST (Hidden until typing) -->
+    <div id="searchList"></div>
+
+    <div id="status">Загрузка базы...</div>
     
+    <!-- 3. CAMERA -->
     <div id="reader"></div>
 
-    <div id="result">
+    <!-- 4. RESULT CARD (Hidden until scan/click) -->
+    <div id="resultCard">
         <div class="label">НАИМЕНОВАНИЕ:</div>
-        <div id="name" class="value"></div>
+        <div id="resName" class="value"></div>
         
+        <div class="label">ШТРИХКОД:</div>
+        <div id="resBarcode" class="value" style="font-size: 0.9em; color:#666;"></div>
+
         <div class="label">ЯЧЕЙКА:</div>
-        <div id="location" class="location-box"></div>
+        <div id="resLocation" class="location-box"></div>
         
-        <button onclick="restartScanner()">Сканировать еще</button>
+        <button onclick="resetApp()">Вернуться к поиску</button>
     </div>
 
     <script>
-        let database = {};
+        let database = {}; // Object for fast barcode lookup
+        let dataArray = []; // Array for text search
         let html5QrcodeScanner = null;
 
-        // 1. Load and Parse the CSV file
+        // --- LOAD DATA ---
         fetch('data.csv')
             .then(response => response.text())
             .then(text => {
@@ -62,53 +96,110 @@
                 lines.forEach(line => {
                     const parts = line.split(';');
                     if (parts.length >= 3) {
-                        const barcode = parts[0].trim();
-                        const productName = parts[1].trim();
-                        const cellLocation = parts[2].trim();
-                        if(barcode && barcode !== "Штрихкод") {
-                            database[barcode] = { name: productName, loc: cellLocation };
+                        const code = parts[0].trim();
+                        const name = parts[1].trim();
+                        const loc = parts[2].trim();
+
+                        if(code && code !== "Штрихкод") {
+                            // Store in object for Scanner (fast)
+                            database[code] = { name: name, loc: loc, code: code };
+                            // Store in array for Search (iteration)
+                            dataArray.push({ name: name, loc: loc, code: code });
                         }
                     }
                 });
-                document.getElementById('status').innerText = "Готов к сканированию";
+                document.getElementById('status').innerText = "База загружена. Сканируйте или ищите.";
                 startScanner();
             })
             .catch(err => {
-                document.getElementById('status').innerText = "Ошибка: Не могу найти файл data.csv";
-                console.error(err);
+                document.getElementById('status').innerText = "Ошибка: data.csv не найден";
             });
 
-        // 2. Scanner Logic
-        function onScanSuccess(decodedText, decodedResult) {
-            if (html5QrcodeScanner) {
-                html5QrcodeScanner.clear(); 
+        // --- SEARCH LOGIC ---
+        function doSearch() {
+            const query = document.getElementById('searchInput').value.toLowerCase();
+            const listDiv = document.getElementById('searchList');
+            const readerDiv = document.getElementById('reader');
+            
+            listDiv.innerHTML = '';
+
+            if (query.length < 2) {
+                listDiv.style.display = 'none';
+                readerDiv.style.display = 'block'; // Show camera when not searching
+                return;
             }
 
-            const resultDiv = document.getElementById('result');
-            const nameDiv = document.getElementById('name');
-            const locDiv = document.getElementById('location');
+            // Hide camera while searching to save space
+            readerDiv.style.display = 'none';
+            listDiv.style.display = 'block';
 
-            if (database[decodedText]) {
-                nameDiv.innerText = database[decodedText].name;
-                locDiv.innerText = database[decodedText].loc;
+            // Filter data
+            const results = dataArray.filter(item => 
+                item.name.toLowerCase().includes(query) || 
+                item.code.includes(query)
+            );
+
+            if (results.length === 0) {
+                listDiv.innerHTML = '<div class="search-item">Ничего не найдено</div>';
+                return;
+            }
+
+            // Limit to 20 results for performance
+            results.slice(0, 20).forEach(item => {
+                const div = document.createElement('div');
+                div.className = 'search-item';
+                div.innerHTML = `
+                    <div class="item-name">${item.name}</div>
+                    <div class="item-barcode">${item.code}</div>
+                `;
+                div.onclick = () => showProduct(item.code);
+                listDiv.appendChild(div);
+            });
+        }
+
+        // --- DISPLAY PRODUCT ---
+        function showProduct(code) {
+            // Stop camera if running
+            if (html5QrcodeScanner) {
+                try { html5QrcodeScanner.pause(); } catch(e){}
+            }
+
+            // Hide search and camera, show result
+            document.getElementById('searchList').style.display = 'none';
+            document.getElementById('reader').style.display = 'none';
+            document.getElementById('searchInput').value = ''; // Clear search
+            
+            const card = document.getElementById('resultCard');
+            const nameDiv = document.getElementById('resName');
+            const locDiv = document.getElementById('resLocation');
+            const codeDiv = document.getElementById('resBarcode');
+
+            if (database[code]) {
+                nameDiv.innerText = database[code].name;
+                locDiv.innerText = database[code].loc;
+                codeDiv.innerText = code;
                 locDiv.style.backgroundColor = "#e3f2fd"; 
                 locDiv.style.color = "#0d47a1";
             } else {
-                nameDiv.innerText = "Товар не найден";
+                nameDiv.innerText = "Товар не найден в базе";
                 locDiv.innerText = "???";
+                codeDiv.innerText = code;
                 locDiv.style.backgroundColor = "#ffebee"; 
                 locDiv.style.color = "#c62828";
             }
             
-            resultDiv.style.display = "block";
+            card.style.display = "block";
+        }
+
+        // --- SCANNER LOGIC ---
+        function onScanSuccess(decodedText, decodedResult) {
+            showProduct(decodedText);
         }
 
         function startScanner() {
-            // --- THIS IS THE FIX ---
-            // We explicitly enable EAN and CODE_128 formats
             const config = { 
                 fps: 10, 
-                qrbox: {width: 250, height: 150}, // Rectangular box is better for barcodes
+                qrbox: {width: 250, height: 150},
                 formatsToSupport: [ 
                     Html5QrcodeSupportedFormats.QR_CODE,
                     Html5QrcodeSupportedFormats.EAN_13,
@@ -122,9 +213,14 @@
             html5QrcodeScanner.render(onScanSuccess);
         }
 
-        function restartScanner() {
-            document.getElementById('result').style.display = "none";
-            startScanner();
+        function resetApp() {
+            document.getElementById('resultCard').style.display = "none";
+            document.getElementById('reader').style.display = "block";
+            
+            // Resume camera
+            if (html5QrcodeScanner) {
+                try { html5QrcodeScanner.resume(); } catch(e){}
+            }
         }
     </script>
 </body>
