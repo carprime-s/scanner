@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Складской Сканер</title>
+    <script src="https://unpkg.com/html5-qrcode" type="text/javascript"></script>
+    <style>
+        body { font-family: sans-serif; padding: 20px; text-align: center; background-color: #f0f2f5; }
+        #reader { width: 100%; max-width: 500px; margin: 0 auto; border-radius: 8px; overflow: hidden; }
+        #result { 
+            margin-top: 20px; 
+            padding: 20px; 
+            border-radius: 8px; 
+            background: white; 
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1); 
+            display: none; 
+            text-align: left;
+        }
+        .label { font-weight: bold; color: #888; font-size: 0.8em; margin-top: 10px; }
+        .value { font-size: 1.2em; color: #000; font-weight: 500; word-wrap: break-word; }
+        .location-box { 
+            background: #e3f2fd; 
+            color: #0d47a1; 
+            padding: 10px; 
+            border-radius: 4px; 
+            text-align: center; 
+            font-size: 1.5em; 
+            font-weight: bold; 
+            margin-top: 5px;
+        }
+        button { margin-top: 20px; padding: 12px 24px; font-size: 16px; cursor: pointer; width: 100%; background: #333; color: white; border: none; border-radius: 4px;}
+        #status { margin-bottom: 10px; color: #666; }
+    </style>
+</head>
+<body>
+
+    <h3>Сканер Штрихкодов</h3>
+    <div id="status">Загрузка базы данных...</div>
+    
+    <div id="reader"></div>
+
+    <div id="result">
+        <div class="label">НАИМЕНОВАНИЕ:</div>
+        <div id="name" class="value"></div>
+        
+        <div class="label">ЯЧЕЙКА:</div>
+        <div id="location" class="location-box"></div>
+        
+        <button onclick="restartScanner()">Сканировать еще</button>
+    </div>
+
+    <script>
+        let database = {};
+        let html5QrcodeScanner = null;
+
+        // 1. Load and Parse the CSV file
+        fetch('data.csv')
+            .then(response => response.text())
+            .then(text => {
+                const lines = text.split('\n');
+                lines.forEach(line => {
+                    const parts = line.split(';');
+                    if (parts.length >= 3) {
+                        const barcode = parts[0].trim();
+                        const productName = parts[1].trim();
+                        const cellLocation = parts[2].trim();
+                        if(barcode && barcode !== "Штрихкод") {
+                            database[barcode] = { name: productName, loc: cellLocation };
+                        }
+                    }
+                });
+                document.getElementById('status').innerText = "Готов к сканированию";
+                startScanner();
+            })
+            .catch(err => {
+                document.getElementById('status').innerText = "Ошибка: Не могу найти файл data.csv";
+                console.error(err);
+            });
+
+        // 2. Scanner Logic
+        function onScanSuccess(decodedText, decodedResult) {
+            if (html5QrcodeScanner) {
+                html5QrcodeScanner.clear(); 
+            }
+
+            const resultDiv = document.getElementById('result');
+            const nameDiv = document.getElementById('name');
+            const locDiv = document.getElementById('location');
+
+            if (database[decodedText]) {
+                nameDiv.innerText = database[decodedText].name;
+                locDiv.innerText = database[decodedText].loc;
+                locDiv.style.backgroundColor = "#e3f2fd"; 
+                locDiv.style.color = "#0d47a1";
+            } else {
+                nameDiv.innerText = "Товар не найден";
+                locDiv.innerText = "???";
+                locDiv.style.backgroundColor = "#ffebee"; 
+                locDiv.style.color = "#c62828";
+            }
+            
+            resultDiv.style.display = "block";
+        }
+
+        function startScanner() {
+            // --- THIS IS THE FIX ---
+            // We explicitly enable EAN and CODE_128 formats
+            const config = { 
+                fps: 10, 
+                qrbox: {width: 250, height: 150}, // Rectangular box is better for barcodes
+                formatsToSupport: [ 
+                    Html5QrcodeSupportedFormats.QR_CODE,
+                    Html5QrcodeSupportedFormats.EAN_13,
+                    Html5QrcodeSupportedFormats.EAN_8,
+                    Html5QrcodeSupportedFormats.CODE_128,
+                    Html5QrcodeSupportedFormats.UPC_A
+                ]
+            };
+            
+            html5QrcodeScanner = new Html5QrcodeScanner("reader", config, false);
+            html5QrcodeScanner.render(onScanSuccess);
+        }
+
+        function restartScanner() {
+            document.getElementById('result').style.display = "none";
+            startScanner();
+        }
+    </script>
+</body>
+</html>
